@@ -2,9 +2,10 @@ package com.snj07;
 
 
 import android.app.Activity;
-import android.support.annotation.Nullable;
 import android.util.Base64;
 import android.util.Log;
+
+import androidx.annotation.Nullable;
 
 import com.google.android.gms.common.ConnectionResult;
 import com.google.android.gms.common.GoogleApiAvailability;
