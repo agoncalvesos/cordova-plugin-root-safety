@@ -24,6 +24,7 @@
             </feature>
         </config-file>
         <source-file src="src/android/com/snj07/AttestationResponseModel.java" target-dir="src/com/snj07"/>
+        <source-file src="src/android/com/snj07/BuildInfo.java" target-dir="src/com/snj07"/>
         <source-file src="src/android/com/snj07/SafetyNetHandler.java" target-dir="src/com/snj07"/>
         <source-file src="src/android/com/snj07/RootSafety.java" target-dir="src/com/snj07" />
         <framework src="src/android/build-extras.gradle" custom="true" type="gradleReference" />
