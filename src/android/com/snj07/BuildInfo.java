@@ -1,93 +1,183 @@
 package com.snj07;
 
 import android.app.Activity;
+import android.content.pm.PackageInfo;
+import android.content.pm.PackageManager;
+import android.util.Log;
 
-import com.google.android.gms.common.ConnectionResult;
-import com.google.android.gms.common.GoogleApiAvailability;
-import com.google.android.gms.safetynet.SafetyNet;
-
-import org.apache.cordova.CallbackContext;
-import org.apache.cordova.CordovaInterface;
-import org.apache.cordova.CordovaPlugin;
-import org.apache.cordova.CordovaWebView;
-import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
-import java.util.HashMap;
-import java.util.Map;
+import java.lang.reflect.Field;
 
-public class RootSafety extends CordovaPlugin {
+public class BuildInfo {
+    private static final String TAG = "SafetyNetPlugin";
 
-    // actions
-    private final String CHECK_GOOGLE_PLAY_SERVICES_AVAILABILITY = "checkGooglePlayServicesAvailability";
-    private final String ATTEST_ACTION = "attest";
-    private final String BUILD_INFO_ACTION = "buildInfo";
+    /**
+     * Cache of result JSON
+     */
 
-    public void initialize(CordovaInterface cordova, CordovaWebView webView) {
-        super.initialize(cordova, webView);
-    }
+    private static JSONObject mBuildInfoCache;
 
-    public boolean execute(String action, JSONArray args, final CallbackContext callbackContext) throws JSONException {
-        if (action.equals(CHECK_GOOGLE_PLAY_SERVICES_AVAILABILITY)) {
-            checkGooglePlayServicesAvailability(callbackContext);
+    public static JSONObject GetBuildInfo(String buildConfigClassName, Activity cordovaActivity) throws Exception {
+        // Cached check
+        if (null != mBuildInfoCache) {
+            return mBuildInfoCache;
         }
 
-        if (GoogleApiAvailability.getInstance().isGooglePlayServicesAvailable(
-                this.cordova.getActivity().getApplicationContext()) == ConnectionResult.SUCCESS) {
-            switch (action) {
-                case ATTEST_ACTION: {
-                    String nonce = args.getString(0);
-                    String key = args.getString(1);
-                    this.handleAttestRequest(nonce, key, RootSafety.this.cordova.getActivity(), callbackContext);
-                    break;
-                }
-                case BUILD_INFO_ACTION:{
-                    try {
-                        String buildConfigClassName = null;
-                        if (1 < args.length()) {
-                            buildConfigClassName = args.getString(0);
-                        }
-                        JSONObject buildInfo = BuildInfo.GetBuildInfo(buildConfigClassName, this.cordova.getActivity());
+        // Load PackageInfo
+        String packageName = cordovaActivity.getPackageName();
+        String basePackageName = packageName;
+        CharSequence displayName = "";
 
-                        callbackContext.success(buildInfo);
-                    } catch (Exception e){
-                        callbackContext.error(createJsonReponse(SafetyNetHandler.STATUS_ERROR, "error in getting build info"));
-                    }
-                }
-            }
+        PackageManager pm = cordovaActivity.getPackageManager();
 
-        } else {
-            // play service not supported
-            callbackContext.error("Play Services not supported");
-        }
-        return true;
-    }
-
-    private void handleAttestRequest(String nonce, String key, Activity activity, CallbackContext callbackContext) {
         try {
-            SafetyNet.getClient(activity).attest(nonce.getBytes(), key)
-                    .addOnSuccessListener(activity,
-                            response -> callbackContext.success(createJsonReponse(SafetyNetHandler.STATUS_SUCCESS, response.getJwsResult())))
-                    .addOnFailureListener(activity,
-                            et -> callbackContext.success(createJsonReponse(SafetyNetHandler.STATUS_FAILURE, et.getLocalizedMessage())));
-        } catch (Exception e) {
-            callbackContext.error(createJsonReponse(SafetyNetHandler.STATUS_FAILURE, e.getLocalizedMessage()));
+            PackageInfo pi = pm.getPackageInfo(packageName, PackageManager.GET_ACTIVITIES);
+
+            if (null != pi.applicationInfo) {
+                displayName = pi.applicationInfo.loadLabel(pm);
+            }
+        } catch (PackageManager.NameNotFoundException e) {
+            e.printStackTrace();
         }
+
+        // Load BuildConfig class
+        Class c = null;
+
+        if (null == buildConfigClassName) {
+            buildConfigClassName = packageName + ".BuildConfig";
+        }
+
+        try {
+            c = Class.forName(buildConfigClassName);
+        } catch (ClassNotFoundException e) {
+        }
+
+        if (null == c) {
+            basePackageName = cordovaActivity.getClass().getPackage().getName();
+            buildConfigClassName = basePackageName + ".BuildConfig";
+
+            try {
+                c = Class.forName(buildConfigClassName);
+            } catch (ClassNotFoundException e) {
+                throw new Exception("BuildConfig ClassNotFoundException: " + e.getMessage());
+            }
+        }
+        // Create result
+        mBuildInfoCache = new JSONObject();
+        try {
+            boolean debug = getClassFieldBoolean(c, "DEBUG", false);
+
+            mBuildInfoCache.put("packageName", packageName);
+            mBuildInfoCache.put("basePackageName", basePackageName);
+            mBuildInfoCache.put("displayName", displayName);
+            mBuildInfoCache.put("name", displayName); // same as displayName
+            mBuildInfoCache.put("version", getClassFieldString(c, "VERSION_NAME", ""));
+            mBuildInfoCache.put("versionCode", getClassFieldInt(c, "VERSION_CODE", 0));
+            mBuildInfoCache.put("buildType", getClassFieldString(c, "BUILD_TYPE", ""));
+            mBuildInfoCache.put("flavor", getClassFieldString(c, "FLAVOR", ""));
+
+            if (debug) {
+                Log.d(TAG, "packageName    : \"" + mBuildInfoCache.getString("packageName") + "\"");
+                Log.d(TAG, "basePackageName: \"" + mBuildInfoCache.getString("basePackageName") + "\"");
+                Log.d(TAG, "displayName    : \"" + mBuildInfoCache.getString("displayName") + "\"");
+                Log.d(TAG, "name           : \"" + mBuildInfoCache.getString("name") + "\"");
+                Log.d(TAG, "version        : \"" + mBuildInfoCache.getString("version") + "\"");
+                Log.d(TAG, "versionCode    : " + mBuildInfoCache.getInt("versionCode"));
+                Log.d(TAG, "flavor         : \"" + mBuildInfoCache.getString("flavor") + "\"");
+            }
+        } catch (JSONException e) {
+            e.printStackTrace();
+            throw new Exception("JSONException: " + e.getMessage());
+        }
+
+        return mBuildInfoCache;
     }
 
-    private JSONObject createJsonReponse(String status, String reponse) {
-        Map<String, String> data = new HashMap<>();
-        data.put(SafetyNetHandler.STATUS_FIELD, status);
-        data.put(SafetyNetHandler.RESPONSE_FIELD, reponse);
-        return new JSONObject(data);
+    /**
+     * Get boolean of field from Class
+     * @param c
+     * @param fieldName
+     * @param defaultReturn
+     * @return
+     */
+    private static boolean getClassFieldBoolean(Class c, String fieldName, boolean defaultReturn) {
+        boolean ret = defaultReturn;
+        Field field = getClassField(c, fieldName);
+
+        if (null != field) {
+            try {
+                ret = field.getBoolean(c);
+            } catch (IllegalAccessException iae) {
+                iae.printStackTrace();
+            }
+        }
+
+        return ret;
     }
 
-    private void checkGooglePlayServicesAvailability(CallbackContext callbackContext) {
-        String response = new SafetyNetHandler().checkGooglePlayServicesAvailability(this.cordova.getActivity());
-        if (response.equals(SafetyNetHandler.STATUS_ERROR)) {
-            callbackContext.error(SafetyNetHandler.STATUS_ERROR);
+    /**
+     * Get field from Class
+     * @param c
+     * @param fieldName
+     * @return
+     */
+    private static Field getClassField(Class c, String fieldName) {
+        Field field = null;
+
+        try {
+            field = c.getField(fieldName);
+        } catch (NoSuchFieldException nsfe) {
+            nsfe.printStackTrace();
         }
-        callbackContext.success(response);
+
+        return field;
     }
+
+    /**
+     * Get string of field from Class
+     * @param c
+     * @param fieldName
+     * @param defaultReturn
+     * @return
+     */
+    private static String getClassFieldString(Class c, String fieldName, String defaultReturn) {
+        String ret = defaultReturn;
+        Field field = getClassField(c, fieldName);
+
+        if (null != field) {
+            try {
+                ret = (String)field.get(c);
+            } catch (IllegalAccessException iae) {
+                iae.printStackTrace();
+            }
+        }
+
+        return ret;
+    }
+
+    /**
+     * Get int of field from Class
+     * @param c
+     * @param fieldName
+     * @param defaultReturn
+     * @return
+     */
+    private static int getClassFieldInt(Class c, String fieldName, int defaultReturn) {
+        int ret = defaultReturn;
+        Field field = getClassField(c, fieldName);
+
+        if (null != field) {
+            try {
+                ret = field.getInt(c);
+            } catch (IllegalAccessException iae) {
+                iae.printStackTrace();
+            }
+        }
+
+        return ret;
+    }
+
+
 }
